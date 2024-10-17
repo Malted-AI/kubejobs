@@ -1,0 +1,90 @@
+[project]
+name = "kubejobs"
+version = "0.4.7"
+description = "A Python library for creating and running Kubernetes Jobs"
+authors = [
+    {name = "Antreas Antoniou", email = "iam@antreas.io"},
+]
+dependencies = [
+    "fire",
+    "PyYAML",
+    "kubernetes",
+    "rich",
+    "streamlit",
+    "pandas",
+]
+requires-python = "~=3.11.9"
+readme = "README.md"
+license = {text = "MIT License"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/AntreasAntoniou/kubejobs"
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-timeout",
+    "pytest-cov",
+    "pytest-xdist",
+    "pytest-mock",
+    "pytest-sugar",
+    "pytest-html",
+    "pytest-asyncio",
+    "autopep8",
+    "autoflake",
+    "pylint",
+    "setuptools",
+    "isort",
+    "pip-audit",
+    "jupyter",
+    "jupyter-server",
+    "black",
+]
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pylint.main]
+disable = "I,R,C"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = ["tests"]
+norecursedirs = [".git", "build"]
+addopts = ["--import-mode=importlib"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.black]
+line-length = 100
+
+[tool.autopep8]
+max_line_length = 100
+
+[tool.pdm.scripts]
+test = { composite = ["pytest tests"] }
+lint = { cmd = "pylint scripts/ src/ tests/" }
+typecheck = { cmd = "mypy scripts/ src/ tests/" }
+audit = { cmd = "pip-audit --desc on" }
+format = { composite = [
+    "autoflake --remove-all-unused-imports --recursive --in-place --exclude=__init__.py scripts/ src/ tests/",
+    "black -l 79 scripts/ src/ tests/",
+    "autopep8 -r -i scripts/ src/ tests/",
+    "isort scripts/ src/ tests/",
+] }
+check_format = { composite = [
+    "autopep8 -r --diff --exit-code scripts/ src/ tests/",
+    "isort -c scripts/ src/ tests/",
+] }

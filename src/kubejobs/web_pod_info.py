@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 import fire
 import numpy as np
 import pandas as pd
-import rich
 import streamlit as st
 from tqdm import tqdm
 

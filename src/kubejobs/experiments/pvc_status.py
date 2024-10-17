@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 from dataclasses import dataclass
@@ -10,9 +11,6 @@ from rich import print
 class PVCStatus:
     available: List[str]
     in_use: List[str]
-
-
-import json
 
 
 def get_pvc_status(unique_identifier: Optional[str] = None) -> PVCStatus:

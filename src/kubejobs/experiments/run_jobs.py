@@ -5,17 +5,14 @@ import random
 import sys
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import fire
 from rich.logging import RichHandler
 
-from kubejobs.experiments.pvc_status import PVCStatus, get_pvc_status
+from kubejobs.experiments.pvc_status import get_pvc_status
 from kubejobs.jobs import KubernetesJob, KueueQueue, create_pvc
-from kubejobs.useful_single_liners.count_gpu_usage_general import (
-    GPU_DETAIL_DICT,
-    count_gpu_usage,
-)
+from kubejobs.useful_single_liners.count_gpu_usage_general import GPU_DETAIL_DICT, count_gpu_usage
 
 logger = logging.getLogger("kubejobs")
 logger.setLevel(logging.INFO)

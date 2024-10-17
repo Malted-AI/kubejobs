@@ -1,6 +1,6 @@
 from rich import print
 
-from kubejobs.jobs import create_pv, create_pvc
+from kubejobs.jobs import create_pvc
 
 if __name__ == "__main__":
     access_modes = ["ReadWriteOnce"]

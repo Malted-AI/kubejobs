@@ -1,8 +1,9 @@
 import time
 
 from rich import print
+from rich.console import Console
 
-from kubejobs.jobs import KubernetesJob, KueueQueue, create_pvc
+from kubejobs.jobs import KubernetesJob, KueueQueue
 
 # unique id generated using time
 unique_id = time.strftime("%Y%m%d%H%M%S")
@@ -26,7 +27,6 @@ job_yaml = job.generate_yaml()
 print(job_yaml)
 job.run()
 
-from rich.console import Console
 
 console = Console()
 

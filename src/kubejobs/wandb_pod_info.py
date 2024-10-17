@@ -1,13 +1,9 @@
 import json
 import subprocess
 import time
-from collections import defaultdict
 from datetime import datetime, timezone
 
 import fire
-import numpy as np
-import pandas as pd
-import rich
 import wandb
 from tqdm.auto import tqdm
 

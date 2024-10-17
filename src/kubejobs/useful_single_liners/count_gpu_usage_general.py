@@ -1,11 +1,8 @@
 import json
 import subprocess
-from collections import OrderedDict, defaultdict
 
-from rich import print
 from rich.console import Console
 from rich.table import Table
-from tqdm.auto import tqdm
 
 # GPU details
 GPU_DETAIL_DICT = {

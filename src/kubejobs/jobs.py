@@ -137,7 +137,7 @@ class KubernetesJob:
 
         self.shm_size = (
             shm_size
-            if self.shm_size is not None
+            if shm_size is not None
             else f"{80 * int(self.gpu_count)}G"
         )
         self.secret_env_vars = secret_env_vars
