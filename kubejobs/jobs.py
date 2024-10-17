@@ -83,7 +83,7 @@ class KubernetesJob:
         ram_request (str, optional): Amount of RAM to request. For example, "1Gi" for 1 gibibyte. Defaults to None. Max is 890 GB
         storage_request (str, optional): Amount of storage to request. For example, "10Gi" for 10 gibibytes. Defaults to None.
         gpu_type (str, optional): Type of GPU resource, e.g. "nvidia.com/gpu". Defaults to None.
-        gpu_limit (int, optional): Number of GPU resources to allocate. Defaults to None.
+        gpu_count (int, optional): Number of GPU resources to allocate. Defaults to None.
         backoff_limit (int, optional): Maximum number of retries before marking job as failed. Defaults to 4.
         restart_policy (str, optional): Restart policy for the job, default is "Never".
         shm_size (str, optional): Size of shared memory, e.g. "2Gi". If not set, defaults to None.
@@ -102,11 +102,9 @@ class KubernetesJob:
         image: str,
         command: List[str] = None,
         args: Optional[List[str]] = None,
-        cpu_request: Optional[str] = None,
-        ram_request: Optional[str] = None,
         storage_request: Optional[str] = None,
         gpu_type: Optional[str] = None,
-        gpu_limit: Optional[int] = None,
+        gpu_count: Optional[int] = None,
         gpu_memory: Optional[str] = None,
         backoff_limit: int = 0,
         restart_policy: str = "Never",
@@ -128,27 +126,19 @@ class KubernetesJob:
         self.image = image
         self.command = command
         self.args = args
-        self.cpu_request = cpu_request if cpu_request else 12 * gpu_limit
-        self.ram_request = ram_request if ram_request else f"{80 * gpu_limit}G"
         self.storage_request = storage_request
         self.gpu_type = gpu_type
-        assert (
-            gpu_limit is not None
-        ), f"gpu_limit must be set to a value between 1 and {MAX_GPU}, not {gpu_limit}"
-        assert (
-            gpu_limit > 0
-        ), f"gpu_limit must be set to a value between 1 and {MAX_GPU}, not {gpu_limit}"
-        self.gpu_limit = gpu_limit
+
         self.backoff_limit = backoff_limit
         self.restart_policy = restart_policy
+
+        if isinstance(shm_size, int):
+            shm_size = f"{shm_size}G"
+
         self.shm_size = (
             shm_size
-            if shm_size is not None
-            else (
-                ram_request
-                if ram_request is not None
-                else f"{MAX_RAM // (MAX_GPU - gpu_limit + 1)}G"
-            )
+            if self.shm_size is not None
+            else f"{80 * int(self.gpu_count)}G"
         )
         self.secret_env_vars = secret_env_vars
         self.image_pull_secret = image_pull_secret
@@ -161,6 +151,8 @@ class KubernetesJob:
         self.user_email = user_email  # This is now a required field.
 
         self.gpu_memory = gpu_memory
+        self.gpu_count = gpu_count
+        self.gpu_type = gpu_type
 
         # Update labels with GPU-specific information
         self.labels = {
@@ -168,21 +160,17 @@ class KubernetesJob:
         }
         if gpu_type:
             self.labels["nvidia.com/gpu.type"] = gpu_type
-        if gpu_limit:
-            self.labels["nvidia.com/gpu.number"] = str(gpu_limit)
+        if gpu_count:
+            self.labels["nvidia.com/gpu.number"] = str(gpu_count)
         if gpu_memory:
             self.labels["nvidia.com/gpu.memory"] = gpu_memory
 
         if labels is not None:
             self.labels.update(labels)
 
-        self.annotations = {
-            "job/user": self.user_name
-        }  # 🏷️ Renamed from "eidf/user"
+        self.annotations = {"job/user": self.user_name}
         if user_email is not None:
-            self.annotations["job/email"] = (
-                user_email  # 🏷️ Renamed from "eidf/email"
-            )
+            self.annotations["job/email"] = user_email
 
         if annotations is not None:
             self.annotations.update(annotations)
@@ -275,9 +263,9 @@ class KubernetesJob:
         if self.args is not None:
             container["args"] = self.args
 
-        if not (self.gpu_type is None or self.gpu_limit is None):
+        if not (self.gpu_type is None or self.gpu_count is None):
             container["resources"] = {
-                "limits": {f"{self.gpu_type}": self.gpu_limit}
+                "limits": {f"{self.gpu_type}": self.gpu_count}
             }
 
         container = self._add_shm_size(container)
@@ -309,10 +297,10 @@ class KubernetesJob:
                 "storage"
             ] = self.storage_request
 
-        if self.gpu_type is not None and self.gpu_limit is not None:
+        if self.gpu_type is not None and self.gpu_count is not None:
             container["resources"]["limits"][
                 f"{self.gpu_type}"
-            ] = self.gpu_limit
+            ] = self.gpu_count
 
         job = {
             "apiVersion": "batch/v1",
