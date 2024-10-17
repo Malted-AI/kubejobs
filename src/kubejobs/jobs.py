@@ -20,13 +20,6 @@ MAX_CPU = 192
 MAX_RAM = 890
 MAX_GPU = 8
 
-# A summary of the GPU setup is:
-
-# * 32 full Nvidia A100 80 GB GPUs
-# * 88 full Nvidia A100 40 GB GPUs
-# * 14 MIG Nvidia A100 40 GB GPUs equating to 28 Nvidia A100 3G.20GB GPUs
-# * 20 MIG Nvidia A100 40 GB GPU equating to 140 A100 1G.5GB GPUs
-
 
 def fetch_user_info():
     user_info = {}
@@ -63,7 +56,7 @@ class GPU_MEMORY:
     GPU_24GB = "24GB"
 
 
-class GPU_COUNT:
+class GPU_NUMBER:
     GPU_1 = 1
     GPU_2 = 2
     GPU_4 = 4
@@ -79,11 +72,9 @@ class KubernetesJob:
         image (str): Container image to use for the job.
         command (List[str], optional): Command to execute in the container. Defaults to None.
         args (List[str], optional): Arguments for the command. Defaults to None.
-        cpu_request (str, optional): Amount of CPU to request. For example, "500m" for half a CPU. Defaults to None. Max is 192 CPUs
-        ram_request (str, optional): Amount of RAM to request. For example, "1Gi" for 1 gibibyte. Defaults to None. Max is 890 GB
         storage_request (str, optional): Amount of storage to request. For example, "10Gi" for 10 gibibytes. Defaults to None.
         gpu_type (str, optional): Type of GPU resource, e.g. "nvidia.com/gpu". Defaults to None.
-        gpu_count (int, optional): Number of GPU resources to allocate. Defaults to None.
+        gpu_number (int, optional): Number of GPU resources to allocate. Defaults to None.
         backoff_limit (int, optional): Maximum number of retries before marking job as failed. Defaults to 4.
         restart_policy (str, optional): Restart policy for the job, default is "Never".
         shm_size (str, optional): Size of shared memory, e.g. "2Gi". If not set, defaults to None.
@@ -104,7 +95,7 @@ class KubernetesJob:
         args: Optional[List[str]] = None,
         storage_request: Optional[str] = None,
         gpu_type: Optional[str] = None,
-        gpu_count: Optional[int] = None,
+        gpu_number: Optional[int] = None,
         gpu_memory: Optional[str] = None,
         backoff_limit: int = 0,
         restart_policy: str = "Never",
@@ -120,6 +111,9 @@ class KubernetesJob:
         annotations: Optional[dict] = None,
         namespace: Optional[str] = None,
         image_pull_secret: Optional[str] = None,
+        node_selector: Optional[dict] = None,  # 🆕 Added node_selector
+        tolerations: Optional[List[dict]] = None,  # 🆕 Added tolerations
+        resources: Optional[dict] = None,  # 🆕 Added resources
     ):
         self.name = name
 
@@ -136,9 +130,7 @@ class KubernetesJob:
             shm_size = f"{shm_size}G"
 
         self.shm_size = (
-            shm_size
-            if shm_size is not None
-            else f"{80 * int(self.gpu_count)}G"
+            shm_size if shm_size is not None else f"{80 * int(gpu_number)}G"
         )
         self.secret_env_vars = secret_env_vars
         self.image_pull_secret = image_pull_secret
@@ -151,8 +143,12 @@ class KubernetesJob:
         self.user_email = user_email  # This is now a required field.
 
         self.gpu_memory = gpu_memory
-        self.gpu_count = gpu_count
+        self.gpu_number = gpu_number
         self.gpu_type = gpu_type
+
+        self.node_selector = node_selector or {}
+        self.tolerations = tolerations or []
+        self.resources = resources or {}
 
         # Update labels with GPU-specific information
         self.labels = {
@@ -160,8 +156,8 @@ class KubernetesJob:
         }
         if gpu_type:
             self.labels["nvidia.com/gpu.type"] = gpu_type
-        if gpu_count:
-            self.labels["nvidia.com/gpu.number"] = str(gpu_count)
+        if gpu_number:
+            self.labels["nvidia.com/gpu.number"] = str(gpu_number)
         if gpu_memory:
             self.labels["nvidia.com/gpu.memory"] = gpu_memory
 
@@ -181,6 +177,19 @@ class KubernetesJob:
         logger.info(f"annotations {self.annotations}")
 
         self.namespace = namespace
+
+    def _setup_node_selector(self) -> dict:
+        """Set up node selector based on GPU requirements and user-provided selectors."""
+        node_selector = self.node_selector.copy()
+        if self.gpu_type:
+            node_selector.setdefault("nvidia.com/gpu.product", self.gpu_type)
+        if self.gpu_memory:
+            node_selector.setdefault("nvidia.com/gpu.memory", self.gpu_memory)
+        if self.gpu_number:
+            node_selector.setdefault(
+                "nvidia.com/gpu.number", str(self.gpu_number)
+            )
+        return node_selector
 
     def _add_shm_size(self, container: dict):
         """Adds shared memory volume if shm_size is set."""
@@ -251,7 +260,8 @@ class KubernetesJob:
             "image": self.image,
             "imagePullPolicy": "Always",
             "volumeMounts": [],
-            "resources": {
+            "resources": self.resources
+            or {
                 "requests": {},
                 "limits": {},
             },
@@ -263,58 +273,29 @@ class KubernetesJob:
         if self.args is not None:
             container["args"] = self.args
 
-        if not (self.gpu_type is None or self.gpu_count is None):
-            container["resources"] = {
-                "limits": {f"{self.gpu_type}": self.gpu_count}
-            }
-
         container = self._add_shm_size(container)
         container = self._add_env_vars(container)
         container = self._add_volume_mounts(container)
         container = self._add_privileged_security_context(container)
-
-        if (
-            self.cpu_request is not None
-            or self.ram_request is not None
-            or self.storage_request is not None
-        ):
-            if "resources" not in container:
-                container["resources"] = {"requests": {}}
-
-            if "requests" not in container["resources"]:
-                container["resources"]["requests"] = {}
-
-        if self.cpu_request is not None:
-            container["resources"]["requests"]["cpu"] = self.cpu_request
-            container["resources"]["limits"]["cpu"] = self.cpu_request
-
-        if self.ram_request is not None:
-            container["resources"]["requests"]["memory"] = self.ram_request
-            container["resources"]["limits"]["memory"] = self.ram_request
 
         if self.storage_request is not None:
             container["resources"]["requests"][
                 "storage"
             ] = self.storage_request
 
-        if self.gpu_type is not None and self.gpu_count is not None:
-            container["resources"]["limits"][
-                f"{self.gpu_type}"
-            ] = self.gpu_count
-
         job = {
             "apiVersion": "batch/v1",
             "kind": "Job",
             "metadata": {
                 "name": self.name,
-                "labels": self.labels,  # Add labels here
-                "annotations": self.annotations,  # Add metadata here
+                "labels": self.labels,
+                "annotations": self.annotations,
             },
             "spec": {
                 "template": {
                     "metadata": {
-                        "labels": self.labels,  # Add labels to Pod template as well
-                        "annotations": self.annotations,  # Add metadata to Pod template as well
+                        "labels": self.labels,
+                        "annotations": self.annotations,
                     },
                     "spec": {
                         "containers": [container],
@@ -326,20 +307,29 @@ class KubernetesJob:
             },
         }
 
+        # Add node selector
+        node_selector = self._setup_node_selector()
+        if node_selector:
+            job["spec"]["template"]["spec"]["nodeSelector"] = node_selector
+
+        # Add tolerations
+        if self.tolerations:
+            job["spec"]["template"]["spec"]["tolerations"] = self.tolerations
+
+        # Add GPU resources if specified
+        if self.gpu_number and not self.resources:
+            container["resources"]["limits"][
+                "nvidia.com/gpu"
+            ] = self.gpu_number
+            container["resources"]["requests"][
+                "nvidia.com/gpu"
+            ] = self.gpu_number
+
         if self.job_deadlineseconds:
             job["spec"]["activeDeadlineSeconds"] = self.job_deadlineseconds
 
         if self.namespace:
             job["metadata"]["namespace"] = self.namespace
-
-        if self.gpu_type:
-            job["spec"]["template"]["spec"]["nodeSelector"] = {
-                "nvidia.com/gpu.type": self.gpu_type,
-            }
-            if self.gpu_memory:
-                job["spec"]["template"]["spec"]["nodeSelector"][
-                    "nvidia.com/gpu.memory"
-                ] = self.gpu_memory
 
         # Add shared memory volume if shm_size is set
         if self.shm_size:
@@ -381,6 +371,9 @@ class KubernetesJob:
         return yaml.dump(job)
 
     def run(self):
+        from kubernetes import config
+
+        config.load_kube_config()
         job_yaml = self.generate_yaml()
 
         # Save the generated YAML to a temporary file
