@@ -8,7 +8,6 @@ from typing import List, Optional
 
 import fire
 import yaml
-from kubernetes import client, config
 from rich.logging import RichHandler
 
 logger = logging.getLogger(__name__)
@@ -53,16 +52,22 @@ def fetch_user_info():
     return user_info
 
 
-class GPU_PRODUCT:
-    NVIDIA_A100_SXM4_80GB = "NVIDIA-A100-SXM4-80GB"
-    NVIDIA_A100_SXM4_40GB = "NVIDIA-A100-SXM4-40GB"
-    NVIDIA_A100_SXM4_40GB_MIG_3G_20GB = "NVIDIA-A100-SXM4-40GB-MIG-3g.20gb"
-    NVIDIA_A100_SXM4_40GB_MIG_1G_5GB = "NVIDIA-A100-SXM4-40GB-MIG-1g.5gb"
-    NVIDIA_H100_80GB = "NVIDIA-H100-80GB-HBM3"
+class GPU_TYPE:
+    NVIDIA_A100 = "NVIDIA-A100"
+    NVIDIA_L4 = "NVIDIA-L4"
 
 
-class KueueQueue:
-    INFORMATICS = "informatics-user-queue"
+class GPU_MEMORY:
+    GPU_40GB = "40GB"
+    GPU_80GB = "80GB"
+    GPU_24GB = "24GB"
+
+
+class GPU_COUNT:
+    GPU_1 = 1
+    GPU_2 = 2
+    GPU_4 = 4
+    GPU_8 = 8
 
 
 class KubernetesJob:
@@ -78,11 +83,6 @@ class KubernetesJob:
         ram_request (str, optional): Amount of RAM to request. For example, "1Gi" for 1 gibibyte. Defaults to None. Max is 890 GB
         storage_request (str, optional): Amount of storage to request. For example, "10Gi" for 10 gibibytes. Defaults to None.
         gpu_type (str, optional): Type of GPU resource, e.g. "nvidia.com/gpu". Defaults to None.
-        gpu_product (str, optional): GPU product, e.g. "NVIDIA-A100-SXM4-80GB". Defaults to None.
-                                                    Possible choices: NVIDIA-A100-SXM4-80GB – a full non-MIG 80GB GPU, total available 32
-                                                                      NVIDIA-A100-SXM4-40GB – a full non-MIG 40GB GPU, total available 88
-                                                                      NVIDIA-A100-SXM4-40GB-MIG-3g.20gb – just under half-GPU
-                                                                      NVIDIA-A100-SXM4-40GB-MIG-1g.5gb – a seventh of a GPU
         gpu_limit (int, optional): Number of GPU resources to allocate. Defaults to None.
         backoff_limit (int, optional): Maximum number of retries before marking job as failed. Defaults to 4.
         restart_policy (str, optional): Restart policy for the job, default is "Never".
@@ -100,15 +100,14 @@ class KubernetesJob:
         self,
         name: str,
         image: str,
-        kueue_queue_name: str,
         command: List[str] = None,
         args: Optional[List[str]] = None,
         cpu_request: Optional[str] = None,
         ram_request: Optional[str] = None,
         storage_request: Optional[str] = None,
         gpu_type: Optional[str] = None,
-        gpu_product: Optional[str] = None,
         gpu_limit: Optional[int] = None,
+        gpu_memory: Optional[str] = None,
         backoff_limit: int = 0,
         restart_policy: str = "Never",
         shm_size: Optional[str] = None,
@@ -133,7 +132,6 @@ class KubernetesJob:
         self.ram_request = ram_request if ram_request else f"{80 * gpu_limit}G"
         self.storage_request = storage_request
         self.gpu_type = gpu_type
-        self.gpu_product = gpu_product
         assert (
             gpu_limit is not None
         ), f"gpu_limit must be set to a value between 1 and {MAX_GPU}, not {gpu_limit}"
@@ -161,19 +159,30 @@ class KubernetesJob:
 
         self.user_name = user_name or os.environ.get("USER", "unknown")
         self.user_email = user_email  # This is now a required field.
-        self.kueue_queue_name = kueue_queue_name
 
+        self.gpu_memory = gpu_memory
+
+        # Update labels with GPU-specific information
         self.labels = {
-            "eidf/user": self.user_name,
-            "kueue.x-k8s.io/queue-name": self.kueue_queue_name,
+            "job/user": self.user_name,
         }
+        if gpu_type:
+            self.labels["nvidia.com/gpu.type"] = gpu_type
+        if gpu_limit:
+            self.labels["nvidia.com/gpu.number"] = str(gpu_limit)
+        if gpu_memory:
+            self.labels["nvidia.com/gpu.memory"] = gpu_memory
 
         if labels is not None:
             self.labels.update(labels)
 
-        self.annotations = {"eidf/user": self.user_name}
+        self.annotations = {
+            "job/user": self.user_name
+        }  # 🏷️ Renamed from "eidf/user"
         if user_email is not None:
-            self.annotations["eidf/email"] = user_email
+            self.annotations["job/email"] = (
+                user_email  # 🏷️ Renamed from "eidf/email"
+            )
 
         if annotations is not None:
             self.annotations.update(annotations)
@@ -266,11 +275,7 @@ class KubernetesJob:
         if self.args is not None:
             container["args"] = self.args
 
-        if not (
-            self.gpu_type is None
-            or self.gpu_limit is None
-            or self.gpu_product is None
-        ):
+        if not (self.gpu_type is None or self.gpu_limit is None):
             container["resources"] = {
                 "limits": {f"{self.gpu_type}": self.gpu_limit}
             }
@@ -339,14 +344,15 @@ class KubernetesJob:
         if self.namespace:
             job["metadata"]["namespace"] = self.namespace
 
-        if not (
-            self.gpu_type is None
-            or self.gpu_limit is None
-            or self.gpu_product is None
-        ):
+        if self.gpu_type:
             job["spec"]["template"]["spec"]["nodeSelector"] = {
-                f"{self.gpu_type}.product": self.gpu_product
+                "nvidia.com/gpu.type": self.gpu_type,
             }
+            if self.gpu_memory:
+                job["spec"]["template"]["spec"]["nodeSelector"][
+                    "nvidia.com/gpu.memory"
+                ] = self.gpu_memory
+
         # Add shared memory volume if shm_size is set
         if self.shm_size:
             job["spec"]["template"]["spec"]["volumes"].append(
@@ -387,8 +393,6 @@ class KubernetesJob:
         return yaml.dump(job)
 
     def run(self):
-        config.load_kube_config()
-
         job_yaml = self.generate_yaml()
 
         # Save the generated YAML to a temporary file
@@ -520,40 +524,31 @@ def create_pv(
     pv_name: str,
     storage: str,
     storage_class_name: str,
-    access_modes: list,
+    access_modes: List[str],
     pv_type: str,
     namespace: str = "default",
-    claim_name: str = None,
-    local_path: str = None,
+    claim_name: Optional[str] = None,
+    local_path: Optional[str] = None,
     fs_type: str = "ext4",
-):
+) -> None:
     """
-    Create a PersistentVolume in the specified namespace with the specified type.
+    Create a PersistentVolume using kubectl commands.
 
     :param pv_name: The name of the PersistentVolume.
     :param storage: The amount of storage for the PersistentVolume (e.g., "1500Gi").
     :param storage_class_name: The storage class name for the PersistentVolume.
     :param access_modes: A list of access modes for the PersistentVolume.
-    :param pv_type: The type of PersistentVolume, either 'local' or 'gcePersistentDisk'.
+    :param pv_type: The type of PersistentVolume, either 'local' or 'node'.
     :param namespace: The namespace in which to create the PersistentVolume. Defaults to "default".
     :param claim_name: The name of the PersistentVolumeClaim to bind to the PersistentVolume.
     :param local_path: The path on the host for a local PersistentVolume. Required if pv_type is 'local'.
     :param fs_type: The filesystem type for the PersistentVolume. Defaults to "ext4".
 
-    Example usage:
-
-    .. code-block:: python
-
-        create_pv("pv-instafluencer-data", "1500Gi", "sc-instafluencer-data", ["ReadOnlyMany"], "local",
-                  claim_name="pvc-instafluencer-data", local_path="/mnt/data")
-        # This will create a local PersistentVolume named "pv-instafluencer-data" with 1500Gi of storage,
-        # "sc-instafluencer-data" storage class, ReadOnlyMany access mode, and a local path "/mnt/data".
+    :raises ValueError: If pv_type is not 'local' or 'node', or if local_path is not provided for 'local' type.
+    :raises subprocess.CalledProcessError: If the kubectl command fails.
     """
-
     if pv_type not in ["local", "node"]:
-        raise ValueError(
-            "pv_type must be either 'local' or 'gcePersistentDisk'"
-        )
+        raise ValueError("pv_type must be either 'local' or 'node'")
 
     if pv_type == "local" and not local_path:
         raise ValueError("local_path must be provided when pv_type is 'local'")
@@ -576,10 +571,29 @@ def create_pv(
     if pv_type == "local":
         pv["spec"]["hostPath"] = {"path": local_path}
 
-    logger.info(pv)
-    config.load_kube_config()
-    core_api = client.CoreV1Api()
-    core_api.create_persistent_volume(body=pv)
+    # Convert the PV dictionary to a JSON string
+    pv_json = json.dumps(pv)
+
+    # Write the JSON to a temporary file
+    with open("pv.json", "w") as f:
+        f.write(pv_json)
+
+    # Use kubectl to create the PV from the JSON file
+    try:
+        subprocess.run(
+            ["kubectl", "apply", "-f", "pv.json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        logger.info(f"Successfully created PersistentVolume: {pv_name}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to create PersistentVolume: {pv_name}")
+        logger.error(f"Error: {e.stderr}")
+        raise
+    finally:
+        # Clean up the temporary file
+        subprocess.run(["rm", "pv.json"], check=True)
 
 
 if __name__ == "__main__":
