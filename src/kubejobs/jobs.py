@@ -182,7 +182,7 @@ class KubernetesJob:
         """Set up node selector based on GPU requirements and user-provided selectors."""
         node_selector = self.node_selector.copy()
         if self.gpu_type:
-            node_selector.setdefault("nvidia.com/gpu.product", self.gpu_type)
+            node_selector.setdefault("nvidia.com/gpu.type", self.gpu_type)
         if self.gpu_memory:
             node_selector.setdefault("nvidia.com/gpu.memory", self.gpu_memory)
         if self.gpu_number:
