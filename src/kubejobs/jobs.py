@@ -16,10 +16,6 @@ handler = RichHandler(markup=True)
 handler.setFormatter(logging.Formatter("%(message)s"))
 logger.addHandler(handler)
 
-MAX_CPU = 192
-MAX_RAM = 890
-MAX_GPU = 8
-
 
 def fetch_user_info():
     user_info = {}
@@ -114,6 +110,7 @@ class KubernetesJob:
         node_selector: Optional[dict] = None,  # 🆕 Added node_selector
         tolerations: Optional[List[dict]] = None,  # 🆕 Added tolerations
         resources: Optional[dict] = None,  # 🆕 Added resources
+        image_pull_secrets: Optional[List[str]] = None,  # 🆕 New parameter
     ):
         self.name = name
 
@@ -130,7 +127,9 @@ class KubernetesJob:
             shm_size = f"{shm_size}G"
 
         self.shm_size = (
-            shm_size if shm_size is not None else f"{80 * int(gpu_number)}G"
+            shm_size
+            if shm_size is not None
+            else f"{80 * int(gpu_number or 1)}G"
         )
         self.secret_env_vars = secret_env_vars
         self.image_pull_secret = image_pull_secret
@@ -177,6 +176,10 @@ class KubernetesJob:
         logger.info(f"annotations {self.annotations}")
 
         self.namespace = namespace
+
+        self.image_pull_secrets = (
+            image_pull_secrets  # 🆕 Store the new parameter
+        )
 
     def _setup_node_selector(self) -> dict:
         """Set up node selector based on GPU requirements and user-provided selectors."""
@@ -366,6 +369,12 @@ class KubernetesJob:
         if self.image_pull_secret:
             job["spec"]["template"]["spec"]["imagePullSecrets"] = [
                 {"name": self.image_pull_secret}
+            ]
+
+        # 🆕 Add imagePullSecrets if specified
+        if self.image_pull_secrets:
+            job["spec"]["template"]["spec"]["imagePullSecrets"] = [
+                {"name": secret} for secret in self.image_pull_secrets
             ]
 
         return yaml.dump(job)
