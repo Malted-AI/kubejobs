@@ -320,7 +320,7 @@ class KubernetesJob:
             job["spec"]["template"]["spec"]["tolerations"] = self.tolerations
 
         # Add GPU resources if specified
-        if self.gpu_number and not self.resources:
+        if self.gpu_number:
             container["resources"]["limits"][
                 "nvidia.com/gpu"
             ] = self.gpu_number
